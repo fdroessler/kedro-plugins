@@ -1,0 +1,76 @@
+from collections import defaultdict
+
+from pathlib import Path
+
+from airflow import DAG
+from datetime import datetime, timedelta
+
+from airflow.operators.python import PythonVirtualenvOperator
+
+def kedro_func(project, path, env, node_names, pipeline_name):
+        """
+        Example function that will be performed in a virtual environment.
+
+        Importing at the module level ensures that it will not attempt to import the
+        library before it is installed.
+        """
+        from kedro.framework.session import KedroSession
+        from kedro.framework.project import configure_project
+
+        configure_project(project)
+        with KedroSession.create(project,
+                                    path,
+                                    env=env) as session:
+            context = session.load_context()
+            print(context.catalog.list())
+            session.run(pipeline_name, node_names=node_names)
+        print('Finished')
+
+# Kedro settings required to run your pipeline
+env = "{{ env }}"
+pipeline_name = "{{ pipeline_name }}"
+project_path = Path.cwd()
+package_name = "{{ package_name }}"
+
+# Default settings applied to all tasks
+default_args = {
+    'owner': 'airflow',
+    'depends_on_past': False,
+    'email_on_failure': False,
+    'email_on_retry': False,
+    'retries': 1,
+    'retry_delay': timedelta(minutes=5)
+}
+
+# Using a DAG context manager, you don't have to specify the dag property of each task
+with DAG(
+    "{{ dag_name | safe | slugify }}",
+    start_date=datetime(2019, 1, 1),
+    max_active_runs=3,
+    schedule_interval=timedelta(minutes=30),  # https://airflow.apache.org/docs/stable/scheduler.html#dag-runs
+    default_args=default_args,
+    catchup=False # enable if you don't want historical dag runs to run
+) as dag:
+
+    tasks = {}
+    {% for node in pipeline.nodes %}
+    tasks["{{ node.name | safe | slugify }}"] = PythonVirtualenvOperator(
+        python_callable=kedro_func,
+        requirements=['kedro'],
+        system_site_packages=True,
+        task_id="{{ node.name | safe | slugify  }}",
+        op_kwargs={
+            "package_name": package_name,
+            "pipeline_name": pipeline_name,
+            "node_name": "{{ node.name | safe }}",
+            "project_path": project_path,
+            "env": env,
+        }
+    )
+    {% endfor %}
+
+    {% for parent_node, child_nodes in dependencies.items() -%}
+    {% for child in child_nodes %}
+    tasks["{{ parent_node.name | safe | slugify }}"] >> tasks["{{ child.name | safe | slugify }}"]
+    {% endfor %}
+    {%- endfor %}
