@@ -9,6 +9,7 @@ from typing import Any, Dict
 
 import fsspec
 import pandas as pd
+
 from kedro.io.core import (
     PROTOCOL_DELIMITER,
     AbstractVersionedDataSet,
@@ -16,12 +17,14 @@ from kedro.io.core import (
     Version,
     get_filepath_str,
     get_protocol_and_path,
+    FileSystemMixin
 )
 
 logger = logging.getLogger(__name__)
 
 
-class CSVDataSet(AbstractVersionedDataSet[pd.DataFrame, pd.DataFrame]):
+
+class CSVDataSet(AbstractVersionedDataSet[pd.DataFrame, pd.DataFrame], FileSystemMixin):
     """``CSVDataSet`` loads/saves data from/to a CSV file using an underlying
     filesystem (e.g.: local, S3, GCS). It uses pandas to handle the CSV file.
 
@@ -103,22 +106,22 @@ class CSVDataSet(AbstractVersionedDataSet[pd.DataFrame, pd.DataFrame]):
             fs_args: Extra arguments to pass into underlying filesystem class constructor
                 (e.g. `{"project": "my-project"}` for ``GCSFileSystem``).
         """
-        _fs_args = deepcopy(fs_args) or {}
-        _credentials = deepcopy(credentials) or {}
-
         protocol, path = get_protocol_and_path(filepath, version)
-        if protocol == "file":
-            _fs_args.setdefault("auto_mkdir", True)
+        FileSystemMixin.__init__(
+            self,
+            protocol,
+            filepath,
+            credentials,
+            fs_args
+        )
+        
 
-        self._protocol = protocol
-        self._storage_options = {**_credentials, **_fs_args}
-        self._fs = fsspec.filesystem(self._protocol, **self._storage_options)
-
-        super().__init__(
+        AbstractVersionedDataSet.__init__(
+            self,
             filepath=PurePosixPath(path),
             version=version,
-            exists_function=self._fs.exists,
-            glob_function=self._fs.glob,
+            exists_function=self.exists,
+            glob_function=self.glob,
         )
 
         # Handle default load and save arguments
